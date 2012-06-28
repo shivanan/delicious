@@ -1,0 +1,78 @@
+<!--
+/*
+ * Delicious Bookmarker
+ * Copyright (c) 2009,2010 Haran Shivanan <shivanan@statictype.org>
+ * Licensed under the MIT License. See the LICENSE.txt file
+ */
+ -->
+<html>
+  <head>
+      <title>Login</title>
+      <script src="jquery.min.js"></script>
+      <script src="util.js"></script>
+      <script src="delicious.js"></script>
+    <script>
+        var next_func = null;
+        var bp = chrome.extension.getBackgroundPage();
+        function setNextFunc(func) {
+            console.log('func:');
+            console.log(func);
+            next_func = func;
+        }
+        function done() {
+                var user = $('#del_user').val();
+                var pwd = $('#del_pwd').val();
+                bp.setLogin(user,pwd);
+                if (!!next_func) next_func();
+                window.close();
+        }
+        $(document).ready(function(){
+            $('#del_user').focus();
+            registerSubmit('#del_pwd','#save_login');
+        });
+    </script>
+    <style type="text/css">
+		div.toolstrip-button {
+		color: #000;
+		cursor: hand;
+		font: normal 12px helvetica, arial, verdana;
+		width: 150px;
+		padding: 6px;
+		border-bottom: 1px solid #eee;
+		}
+		div.toolstrip-button:last-child {border-bottom-style: none;}
+		div.toolstrip-button:hover {
+			background-color: #3274d0;
+			color: #fff;
+			}
+                .toolstrip-item {
+                        color: #000;
+                        font-size: 12px;
+                }
+                .toolstrip-item.tr.td {
+                        text-align: center;
+                }
+
+    </style>
+  </head>
+  <body >
+      <table class='toolstrip-item' style='width:100%'>
+          <tr>
+              <td colspan='2'>
+                  Login to delicious:
+              </td>
+          <tr>
+              <td>User</td>
+              <td><input id='del_user' style='width:100%'  type='text'></input></td>
+          </tr>
+          <tr>
+              <td>Password</td>
+              <td><input id='del_pwd' style='width:100%'   type='password'></input></td>
+          </tr>
+          <tr>
+              <td></td>
+              <td align='right'><input id='save_login' type='button' value='Login' onclick='done();return false;' /></td>
+          </tr>
+      </table>
+  </body>
+</html>

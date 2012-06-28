@@ -1,0 +1,360 @@
+<!--
+/*
+ * Delicious Bookmarker
+ * Copyright (c) 2009,2010 Haran Shivanan <shivanan@statictype.org>
+ * Licensed under the MIT License. See the LICENSE.txt file
+ */
+ -->
+<html>
+    <head>
+    <script src="jquery.js"></script>
+    <script src="util.js"></script>
+    <script src="delicious.js"></script>
+    <script>
+        var TagCache = {};
+        var SavedItemCache = {};
+        var UserTagList = null;
+        var CanUpdate = true;
+        function getAuthDetails() {
+            var del_user = localStorage['del_user'] || "";
+            var del_password = localStorage['del_password'] || "";
+            return {'user':del_user,'password':del_password};
+        }
+        function setAuthDetails(auth) {
+            localStorage['del_user'] = auth.user;
+            localStorage['del_password'] = auth.password;
+        }
+        function setLogin(u,p) {
+            if (u=='') {
+                setAuthDetails({'user':u,'password':p});
+                return;
+            }
+            var d = new Delicious(u,p);
+            d.checkLogin(function(_u){
+                setAuthDetails({'user':u,'password':p});
+                scheduleUpdate(1);
+            }
+            ,function(e){
+                alert('Login to Delicious failed');
+                setAuthDetails({'user':'','password':''});
+            });
+        }
+        function showError(msg) {
+            console.error('Error:' , msg);
+            alert(msg);
+        }
+        function getLastUpdateTime() {
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            return d.getLocalData('LastUpdateTime');
+        }
+        function setLastUpdateTime(t) {
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            d.setLocalData('LastUpdateTime',t);
+        }
+        function authDo(rest) {
+            var auth = getAuthDetails();
+            if (auth.user.length>0) {
+                if (!!rest)
+                    rest();
+            }
+            else {
+                var width = 320;
+                var height = 130;
+                var wtop = (screen.height/2-height/2)||'';
+                var wleft = (screen.width/2-width/2)||'';
+                var w = window.open('login.html','deliciousuiv5','location=no,links=no,scrollbars=no,toolbar=no,width='+width+',height='+height+',center:on,center=on,top='+wtop+',left='+wleft);
+                w.addEventListener('load',function() {
+                    w.setNextFunc(rest);
+                });
+            }
+        }
+        function clearAuth() {
+            setAuthDetails({'user':"",'password':""});
+            TagCache = {};
+            SavedItemCache = {};
+            UserTagList = null;
+        }
+        function reauth(rest) {
+            clearAuth();
+            authDo(rest);
+        }
+        function openBrowser() {
+            var url = 'browser.html';
+            chrome.tabs.create({
+                'url':url
+            });
+        }
+        function openHomePage() {
+            var url = 'http://delicious.com/';
+            var auth = getAuthDetails();
+            if (!!auth.user) url += auth.user + '/';
+            chrome.tabs.create({
+                'url':url
+            });
+        }
+        function addBookmark(url,title,tags,notes,is_private) {
+            var success = function(xml) {
+                console.log(xml);
+            }
+            var failure = function(msg) {
+                if (msg=='timeout')
+                    msg = 'Unable to add bookmark: ' + title;
+                else
+                    msg = 'Error adding ' + title + ': ' + msg;
+                showError(msg);
+            }
+            var rest = function() {
+                SavedItemCache[url] = {'tags':tags,'is_private':is_private,'notes':notes,'hash':null};
+                var auth = getAuthDetails();
+                var d = new Delicious(auth.user,auth.password);
+                d.addBookmark(url,title,tags,notes,is_private,success,failure);
+            };
+            authDo(rest);
+        }
+        function initDB(cb) {
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            d.getDatabase(cb);
+        }
+        function queryDB(sql,args,finished) {
+            initDB(function(db){
+                db.transaction(function(tx){
+                    tx.executeSql(sql,args,function(tx,dr){
+                        finished(dr,null);
+                    }
+                    ,function(txt,err){
+                        finished(null,err);
+                    })
+                });
+            });
+        }
+        function getSuggestedTags(url,cb) {
+            if (!!TagCache[url] && TagCache[url].length>0) {
+                    cb(TagCache[url]);
+                    return;
+            }
+            authDo(function() {
+                var auth = getAuthDetails();
+                var d = new Delicious(auth.user,auth.password);
+                d.getSuggestedTags(url,function(xml){
+                    var tags = [];
+                    $(xml).find('recommended').each(function(){
+                        tags.push($(this).text());
+                    });
+                    console.log('tags:');
+                    console.log(tags);
+                    TagCache[url] = tags;
+                    if (!!cb) cb(tags);
+                }
+                ,function(err) {
+                    console.error('Error getting tags:' , err);
+                    if (!!cb) cb([]);
+                });
+            });
+        }
+        function getPreviousSavedItem(url,cb) {
+            if (!SavedItemCache[url]){
+                queryDB('select * from Bookmarks where url=?',[url],function(dr,err){
+                    if (dr.rows.length==0) {
+                        cb(null);
+                        return;
+                    }
+                    var row = dr.rows.item(0);
+                    SavedItemCache[url] = {'tags':row.tags,'is_private':false,'notes':row.notes,'hash':row.hash};
+                    cb(SavedItemCache[url]);
+                });
+            }
+            cb(SavedItemCache[url]);
+        }
+        function downloadTags(done_cb) {
+            if (!CanUpdate) return;
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            
+            var err_cb = function(err) {
+                console.error('Error syncing tags:' , err);
+                if (!!done_cb) done_cb(false);
+                //On failure, try again after 5 minutes
+                scheduleTagRefresh(5*60);
+            };
+           
+            var cb = function(xml) {
+                UserTagList = null;
+                var tag_list = [];
+                var statements = [];
+                statements.push({'sql':'delete from Tags;','args':[]});
+                $(xml).find('tag').each(function(){
+                    var tag = {'tag':$(this).attr('tag'),'count':$(this).attr('count')};
+                    tag_list.push(tag);
+                    statements.push({'sql':'insert into Tags(tag,count) values(?,?);','args':[tag.tag,tag.count]});
+                });
+                
+                var finished = function() {
+                    if (!!done_cb) done_cb(true);
+                    scheduleTagRefresh(3*60*60)
+                };
+                
+                d.getDatabase(function(db) {
+                    db.transaction(function(tx){
+                        chainSql(tx,statements,finished,d.dbErrorHandler);
+                    });
+                });
+            };
+            
+            console.log('Refreshing tag list');
+            
+            d.getAllTags(cb,err_cb);
+        }
+
+        var CurrentAllDownloadStatus = {
+            'count':0
+            ,'running': false
+            ,'error':''
+            ,'last':0
+            ,'total':0
+        }
+        function saveBookmarks(delicious,bookmarks,finished) {
+            var statements = [];
+            for(var i=0;i<bookmarks.length;i++) {
+                var bookmark = bookmarks[i];
+                statements.push({
+                    'sql':'insert into Bookmarks(url,title,tags,notes,hash,time) values(?,?,?,?,?,?)'
+                    ,'args':[bookmark['url'],bookmark['title'],bookmark['tags'],bookmark['notes'],bookmark['hash'],bookmark['time']]
+                });
+                console.log('BM',statements[i]);
+            }
+            var done = function() {
+                if (!!finished) finished();
+            }
+            
+            delicious.getDatabase(function(db){
+                db.transaction(function(tx){
+                    chainSql(tx,statements,done,delicious.dbErrorHandler);
+                });
+            });
+        }
+        function downloadAll() {
+            console.log('Download all',CurrentAllDownloadStatus);
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            CurrentAllDownloadStatus.running = true;
+            d.downloadAll(CurrentAllDownloadStatus.last,function(total,bookmarks){
+                CurrentAllDownloadStatus.total = total;
+                CurrentAllDownloadStatus.count += bookmarks.length;
+                CurrentAllDownloadStatus.last = CurrentAllDownloadStatus.count;
+                if (CurrentAllDownloadStatus.total > CurrentAllDownloadStatus.count) {
+                    console.log('Current Count',CurrentAllDownloadStatus.count,'Total',CurrentAllDownloadStatus.total);
+                    console.log('Downloading again...');
+                    scheduleTask('download-all',10,downloadAll);
+                } else {
+                    CurrentAllDownloadStatus.running = false;
+                    CurrentAllDownloadStatus.error = "Completed";
+                    CurrentAllDownloadStatus.count = 0;
+                    CurrentAllDownloadStatus.last = 0;
+                    CurrentAllDownloadStatus.total = 0;
+                }
+
+                saveBookmarks(d,bookmarks);
+            }
+            ,function(err) {
+                CurrentAllDownloadStatus.running = false;
+                CurrentAllDownloadStatus.error = err;
+                CurrentAllDownloadStatus.count = 0;
+                CurrentAllDownloadStatus.last = 0;
+                CurrentAllDownloadStatus.total = 0;
+            }
+            );
+        }
+        function getRecentBookmarks(){
+            if (!CanUpdate) return;
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            d.getRecentBookmarks(function(bookmarks){
+                var finished = function() {
+                    scheduleRecentBookmarks(3*60*60);
+                };
+                saveBookmarks(d,bookmarks,finished);
+            }
+            ,function(err){
+                scheduleRecentBookmarks(5*60);
+            });
+        }
+        
+        function getAllTags(cb) {
+            if (!!UserTagList) {
+                cb(UserTagList);
+                return;
+            }
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            d.getDatabase(function(db){
+                db.transaction(function(tx){
+                    tx.executeSql('select * from Tags order by count desc;',[],function(tx,dr){
+                        var tag_list = [];
+                        for(var i=0;i<dr.rows.length;i++) {
+                            var row = dr.rows.item(i);
+                            tag_list.push({'tag':row.tag,'count':row.count});
+                        }
+                        UserTagList = tag_list;
+                        cb(UserTagList);
+                    },d.dbErrorHandler);
+                });
+            });
+        }
+        function getUpdate() {
+            var auth = getAuthDetails();
+            var d = new Delicious(auth.user,auth.password);
+            
+            var done = function() {
+                scheduleUpdate(60);
+            }
+            
+            d.getUpdate(function(u){
+                var last_time = getLastUpdateTime();
+                console.log('Last Time:',last_time,u);
+                CanUpdate = (!last_time) || (last_time != u.time);
+                console.log('Can Update',CanUpdate);
+                setLastUpdateTime(u.time);
+                if (CanUpdate) {
+                    scheduleTagRefresh(1);
+                    scheduleRecentBookmarks(1);
+                }
+                done();
+            }
+            ,function(err){
+                done();
+            });
+        }
+        
+        /***** Task Scheduling *********/
+        var TaskTimeouts = {};
+        function scheduleTask(task_name,seconds,func) {
+            if (!!TaskTimeouts[task_name]) clearTimeout(TaskTimeouts[task_name]);
+            console.log('scheduling ' + task_name +' in ' + seconds + ' seconds');
+            TaskTimeouts[task_name] = setTimeout(func,seconds*1000);
+        }
+        
+        
+        function scheduleUpdate(seconds) {
+            scheduleTask('Update',seconds,getUpdate);
+        }
+        function scheduleTagRefresh(seconds) {
+            scheduleTask('Tag Refresh',seconds,downloadTags);
+        }
+        function scheduleRecentBookmarks(seconds) {
+            scheduleTask('Recent Bookmarks',seconds,getRecentBookmarks);
+        }
+        
+        scheduleUpdate(10);
+        scheduleTagRefresh(20);
+        scheduleRecentBookmarks(30);
+        initDB(function(db){
+            console.log('Got DB:',db);
+        });
+    </script>
+    </head>
+    <body>
+    </body>
+</html>

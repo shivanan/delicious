@@ -1,0 +1,258 @@
+<!--
+/*
+ * Delicious Bookmarker
+ * Copyright (c) 2009,2010 Haran Shivanan <shivanan@statictype.org>
+ * Licensed under the MIT License. See the LICENSE.txt file
+ */
+ -->
+<html>
+  <head>
+      <link rel="stylesheet" type="text/css" href="jquery.autocomplete.css" /> 
+    <script src="jquery.min.js"></script>
+    <script src="jquery.autocomplete.pack.js"></script>
+    <script src="util.js"></script>
+    <script src="delicious.js"></script>
+    <style type="text/css">
+        body {
+            font-family: Verdana,Helvetica,Arial;
+            font-size: 9px;
+        }
+        a:link {color: #36F; }
+        a:visited {color: #36F;}
+        div.toolstrip-button {
+            color: #000;
+            cursor: hand;
+            font: normal 12px   verdana,helvetica,arial;
+            width: 150px;
+            padding: 6px;
+            border-bottom: 1px solid #eee;
+        }
+        div.toolstrip-button:last-child {border-bottom-style: none;}
+        div.toolstrip-button:hover {
+            background-color: #3274d0;
+            color: #fff;
+        }
+        .toolstrip-item {
+            color: #000;
+            font-size: 12px;
+        }
+        .toolstrip-item.tr.td {
+            text-align: center;
+        }
+        .tag {
+            border:1px solid transparent;
+            margin-top:3px;
+            color:#000000;
+        }
+        .selected_tag {
+            background-color:#EFF2F7;
+            -webkit-border-radius: 5px;
+            border:1px solid #CCD5E4;
+            color:#000000;
+            /*
+            cursor:default;
+            overflow:hidden;
+            */
+        }
+
+    </style>
+    <script>
+        var url;
+        var bp = chrome.extension.getBackgroundPage();
+        function syncTags() {
+            var tags = $('#del_tags').val().split(' ');
+            $('.tag').each(function(){
+                var i = tags.indexOf($(this).attr('tagValue').toLowerCase());
+                if (i >= 0)
+                    $(this).addClass('selected_tag');
+                else
+                    $(this).removeClass('selected_tag');
+            });
+        }
+        function toggle_tag(tag) {
+            var tags = $('#del_tags').val().split(' ');
+            var finder = function(x) { return x.toLowerCase() == tag.toLowerCase();};
+            if (tags.first(finder)) {
+                tags = tags.filter(function(x){return !finder(x)});
+            } else {
+                tags.push(tag);
+            }
+            $('#del_tags').val(tags.join(' ').trim());
+            syncTags();
+        }
+        function add() {
+            chrome.tabs.getSelected( null , function(tab) {
+                url = (tab.url);
+                var title = (tab.title);
+                $('#del_title').val(title);
+                $('#del_url').val(url);
+                var prev_tags = '';
+                var is_private = false;
+                var notes = '';
+                $('#btn_save').val('Save');
+                bp.getPreviousSavedItem(url,function(prev_item){
+                    if (prev_item) {
+                        prev_tags = prev_item['tags'];
+                        is_private = prev_item['is_private'];
+                        notes = prev_item['notes'];
+                        /* A hash indicates the item is already saved in delicious */
+                        if (!!prev_item['hash']) {
+                            $('#btn_save').val('Update');
+                        }
+                    }
+                    //$('#del_tags').val(bp.getPreviousSavedTags(url));
+                    $('#del_tags').val(prev_tags);
+                    $('#del_private').attr('checked',is_private);
+                    $('#del_notes').val(notes);
+                    $('#del_notes').hide();
+                    if (!!notes) showNotes();
+                    syncTags();
+                        
+                });
+                var suggested_tags = $('#suggested_tags');
+                suggested_tags.html('<i>Loading</i>');
+                bp.getSuggestedTags(url,function(tags){
+                    if (tags.length==0) {
+                        suggested_tags.html('<i>None</i>');
+                        return;
+                    }
+                    $(suggested_tags).empty();
+                    for(var i=0;i<tags.length;i++) {
+                        var attrs = {'href':'#','tagValue':tags[i]};
+                        var a = $('<a/>').attr(attrs).append(tags[i]);
+                        $(a).addClass('tag');
+                        $(a).click(toggle_tag.partial(tags[i]));
+                        $(suggested_tags).append(a).append(" ");
+                    }
+                    syncTags();
+                    $('#del_tags').keyup(syncTags);
+                });
+            });
+        }
+        function showNotes() {
+            /*$('#del_notes').attr({'rows':'3'});*/
+            $('#add_desc').hide();
+            $('#desc_text').html('Description');
+            $('#del_notes').show();
+        }
+        function add_bm() {
+                bp.addBookmark($('#del_url').val(),$('#del_title').val(),$('#del_tags').val(),$('#del_notes').val(),$('#del_private').is(':checked'));
+                window.close();
+        }
+        function load() {
+                add();
+                var a = bp.getAuthDetails();
+                var user_node = $('#del_user');
+                if (!!a.user) {
+                    user_node.append('Logged in as: '+a.user+ ' ');
+                    var content = createLink('Logout',function(){
+                        bp.clearAuth();
+                        window.close();
+                    });
+                    user_node.append(content);
+
+                } else {
+                user_node.append(createLink('Login',function(){
+                    bp.authDo();
+                    }));
+                }
+                $('#del_user').append(content);
+                bp.getAllTags(function(all_tags) {
+                    $("#del_tags").autocomplete(all_tags, {
+                        width: 150,
+                        highlight: false,
+                        multiple: true,
+                        multipleSeparator: " ",
+                        scroll: true,
+                        scrollHeight: 100
+                        ,formatItem: function(tag) {
+                            return tag.tag + "   <span style='float:right;'>("+tag.count+")</tag>";
+                        }
+                        ,formatResult: function(tag) {
+                            return tag.tag;
+                        }
+                    });
+                        
+                });
+
+                //registerSubmit('#del_title','#btn_save');
+                //registerSubmit('#del_tags','#btn_save');
+                //registerSubmit('#del_url','#btn_save');
+                $('#del_tags').focus();
+        }
+        function open_home() {
+                bp.openHomePage();
+        }
+        function open_browser() {
+                bp.openBrowser();
+        }
+        function open_about() {
+            chrome.tabs.create({
+                    'url':'about.html'
+            });
+        }
+    </script>
+  </head>
+  <body style='width:300px' onload='load();'>
+      <form autocomplete='off'>
+      <table style='width:100%'>
+          <tr>
+              <td>
+                  Add to Delicious
+              </td>
+              <td align='right'> <a class='toolstrip-item' href='#' onclick='open_home();return false;'>Home</a> </td>
+          </tr>
+      </table>
+      <table class='toolstrip-item' style='width:100%'>
+          <tr>
+              <td>Title</td>
+              <td><input id='del_title' style='width:100%'  type='text'></input></td>
+          </tr>
+          <tr>
+              <td>Tags</td>
+              <td><input id='del_tags' style='width:100%'  type='text'></input></td>
+          </tr>
+          <tr>
+              <td>Suggested</td>
+              <td><div id='suggested_tags' ></div></td>
+          </tr>
+          <tr>
+              <td>Url</td>
+              <td><input id='del_url' style='width:100%'  type='text'></input></td>
+          </tr>
+          <tr>
+              <td>
+                  <span id='desc_text'></span>
+              </td>
+              <td align=''>
+                  <div  id='add_desc' style='cursor:hand' onclick="showNotes();$('#del_notes').focus();return false;">
+                      <a href='#' id='add_desc' >Add Description</a>
+                  </div>
+                  <textarea rows='3' id='del_notes'>
+                  </textarea>
+              </td>
+          </tr>
+          <tr>
+              <td colspan='2'>
+                  <input id='del_private' type='checkbox' />
+                  <label for='del_private'>Private Bookmark</label>
+              </td>
+          </tr>
+      </table>
+      <table class='toolstrip-item' style='width:100%;'>
+          <tr>
+              <td colspan='1' valign='center'><span id='del_user' /></td>
+              <td align='right'><input id='btn_save' type='submit' value='Save' onclick='add_bm();return false;' /></td>
+          </tr>
+          <tr>
+              <td >
+                  <a href='#' onclick='open_browser();return false;'>Search my bookmarks</a>
+              </td>
+              <td align='right' >
+                  <a href='#' onclick='open_about();return false;'>About</a>
+              </td>
+          </tr>
+      </table>
+      </form>
+  </body>
+</html>

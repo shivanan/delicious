@@ -1,0 +1,26 @@
+{
+  "content_scripts": [
+    {
+      "js": [
+        "content.js"
+      ], 
+      "matches": [
+        "http://*/*"
+      ]
+    }
+  ], 
+  "name": "Delicious Bookmarker",
+  "options_page": "options.html",
+  "background_page":"background.html",
+  "version": "0.64",
+  "description": "Delicious Bookmarker for Chrome",
+  "permissions": [
+    "tabs"
+    ,"https://api.del.icio.us/"
+  ],
+  "browser_action": {
+      "default_title": "Delicious",
+      "default_icon": "delicious.png",
+      "popup": "popup.html"
+  }  
+}

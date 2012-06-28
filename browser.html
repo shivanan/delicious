@@ -1,0 +1,185 @@
+<!--
+/*
+ * Delicious Bookmarker
+ * Copyright (c) 2009,2010 Haran Shivanan <shivanan@statictype.org>
+ * Licensed under the MIT License. See the LICENSE.txt file
+ */
+ -->
+<html>
+    <head>
+        <title>Tag Browser</title>
+        <link rel="stylesheet" type="text/css" href="jquery.autocomplete.css" /> 
+        <script src="jquery.min.js"></script>
+        <script src="jquery.autocomplete.pack.js"></script>
+        <script src="util.js"></script>
+        <script src="delicious.js"></script>
+        <style type="text/css">
+            a:link {color: #36F; }
+            a:visited {color: #36F;}
+            .result {
+                border-bottom: 1px dotted gray;
+                padding: 4px;
+            }
+            .result_tag {
+                display: block;
+                font-size: small;
+                font-style: italic;
+            }
+            .header {
+                font-size: 3em;
+            }
+            .tag {
+                border:1px solid transparent;
+                margin-top:3px;
+                color:#000000;
+            }
+            .selected_tag {
+                background-color:#EFF2F7;
+                -webkit-border-radius: 5px;
+                border:1px solid #CCD5E4;
+                color:#000000;
+            }
+
+        </style>
+        <script>
+            var bp = chrome.extension.getBackgroundPage();
+            function render_bm(row) {
+                return '<div class="result">'
+                    +'<a href="' + row.url + '">' + row.title +  '</a>'
+                    + '<span class="result_tag">' + row.tags + '</span>'
+                     + '</div>';
+            }
+            function search() {
+                var splitter = function(txt) {
+                    return txt.split(' ').filter(function(x){ return x.trim().length>0;});
+                };
+                var search_tags = splitter($('#tags').val());
+                var text = $('#search_text').val();
+                bp.queryDB("select * from Bookmarks where title like ? or notes like ? order by time desc",['%' + text + '%','%' + text + '%'],function(dr,err){
+                    if (!!err) {
+                        alert('Error while searching:'+err.message);
+                        return;
+                    }
+                    var tag_map = {};
+                    console.log('st',search_tags);
+                    for(var i=0;i<search_tags.length;i++) tag_map[search_tags[i]] = true;
+                    var rows = dr.rows;
+                    var results = [];
+                    $('#results').empty();
+                    var and_search = !$('#or_search').is(':checked');
+                    for(var i=0;i<rows.length;i++) {
+                        var row = rows.item(i);
+                        if (search_tags.length>0) {
+                            var found_tags = splitter(row.tags).filter(function(tg){return !!tag_map[tg]});
+                            if (and_search) {
+                                if (found_tags.length!=search_tags.length) continue;
+                            } else {
+                                if (found_tags.length==0) continue;
+                            }
+                        }
+                        results.push(row);
+                        $('#results').append(render_bm(row));
+                        if (results.length>=50) break;
+                    }
+                });
+            }
+            var search_timeout = null;
+            function start_search() {
+                if (!!search_timeout) clearTimeout(search_timeout);
+                var search_timeout = setTimeout(search,50);
+            }
+            function load() {
+                bp.getAllTags(function(all_tags) {
+                    $("#tags").autocomplete(all_tags, {
+                        width: 150,
+                        highlight: false,
+                        multiple: true,
+                        multipleSeparator: " ",
+                        scroll: true,
+                        scrollHeight: 100
+                        ,formatItem: function(tag) {
+                            return tag.tag + "   <span style='float:right;'>("+tag.count+")</tag>";
+                        }
+                        ,formatResult: function(tag) {
+                            return tag.tag;
+                        }
+                    });
+                });
+                //$('#btn_search').click(search)
+                $('#tags,#search_text').keyup(start_search);
+                $('#and_search,#or_search').click(start_search);
+                search();
+            }
+            function download_all() {
+                var msg = 'This will download all your public bookmarks from Delicious. This operation may take some time.\r\n';
+                msg += 'You only need to do this *once*. After that,new bookmarks will be automatically retrieved\r\n';
+                msg += 'Continue?';
+                if (!confirm(msg))
+                    return;
+                bp.downloadAll();
+            }
+            function refreshDownloadStatus() {
+                var c = bp.CurrentAllDownloadStatus;
+                var btn = $('#btn_download_all');
+                var sts = $('#download_status');
+                if (!c.running) {
+                    btn.show();
+                    sts.html(c.error);
+                    sts.hide();
+                    setTimeout(refreshDownloadStatus,500);
+                    return;
+                }
+                btn.hide();
+                var content = 'Downloading ' + c.count + ' of ' + c.total;
+                sts.html(content);
+                sts.show();
+                setTimeout(refreshDownloadStatus,500);
+            }
+            refreshDownloadStatus();
+        </script>
+    </head>
+  <body onload='load();'>
+      <div>
+          <a href='about.html'>About</a>
+      </div>
+      <div align='right'>
+          <div id='download_status' ></div>
+          <button id='btn_download_all' onclick='download_all();return false;'> Download all bookmarks </button>
+      </div>
+      <h1 style='border-bottom: 1px solid gray;'>Bookmarks</h1>
+      <table style='width:100%'>
+          <tr>
+              <td ></td>
+                  <td colspan='1'>
+                      <input type='radio' name='search_type' checked id='and_search'> <label for='and_search'>Find bookmarks with all tags</label>
+                      <br /><input type='radio' name='search_type' id='or_search'> <label for='or_search'>Find bookmarks with any of the  tags</label>
+                  </td>
+              </tr>
+          <tr>
+              <td>
+                  Tags
+              </td>
+              <td width='*'>
+                  <input id='tags' type='search' autocomplete='off' placeholder='tag1 tag2 tag3 etc...' style='width:300px;' />
+              </td>
+          </tr>
+          <tr>
+              <td>
+                  Text
+              </td>
+              <td>
+                  <input id='search_text' type='search' placeholder='Search title or description' style='width:300px;' />
+              </td>
+          </tr>
+          <tr>
+              <td colspan='2' style='border-bottom: 1px solid gray;'>
+              </td>
+          </tr>
+          <tr>
+              <td colspan='2'>
+                  <div id='results'></div>
+              </td>
+          </tr>
+      </table>
+  </body>
+</html>
